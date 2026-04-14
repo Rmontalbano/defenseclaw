@@ -159,22 +159,16 @@ type WebhookConfig struct {
 	Enabled         bool     `mapstructure:"enabled"          yaml:"enabled"`
 }
 
-// ListRule defines allow/deny string lists for governance matching.
-type ListRule struct {
-	Allow []string `mapstructure:"allow" yaml:"allow"`
-	Deny  []string `mapstructure:"deny"  yaml:"deny"`
-}
-
 // ModelGovernanceConfig controls which LLM models and providers are
 // permitted through the guardrail proxy. When enabled, requests for
 // disallowed models or providers are blocked before content inspection.
+// Allow/deny lists are defined in the OPA Rego data layer (data.json),
+// not in config.yaml.
 type ModelGovernanceConfig struct {
-	Enabled      bool     `mapstructure:"enabled"       yaml:"enabled"`
-	Mode         string   `mapstructure:"mode"           yaml:"mode"`
-	Providers    ListRule `mapstructure:"providers"      yaml:"providers"`
-	Models       ListRule `mapstructure:"models"         yaml:"models"`
-	BlockMessage string   `mapstructure:"block_message"  yaml:"block_message"`
-	LogAllowed   bool     `mapstructure:"log_allowed"    yaml:"log_allowed"`
+	Enabled      bool   `mapstructure:"enabled"       yaml:"enabled"`
+	Mode         string `mapstructure:"mode"           yaml:"mode"`
+	BlockMessage string `mapstructure:"block_message"  yaml:"block_message"`
+	LogAllowed   bool   `mapstructure:"log_allowed"    yaml:"log_allowed"`
 }
 
 // ResolvedSecret returns the webhook secret/token from the env var.

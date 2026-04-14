@@ -38,6 +38,7 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/audit"
 	"github.com/defenseclaw/defenseclaw/internal/config"
 	"github.com/defenseclaw/defenseclaw/internal/configs"
+	"github.com/defenseclaw/defenseclaw/internal/policy"
 	"github.com/defenseclaw/defenseclaw/internal/telemetry"
 	"github.com/google/uuid"
 )
@@ -111,6 +112,7 @@ func NewGuardrailProxy(
 	policyDir string,
 	notify *NotificationQueue,
 	modelGov config.ModelGovernanceConfig,
+	opa *policy.Engine,
 ) (*GuardrailProxy, error) {
 	dotenvPath := filepath.Join(dataDir, ".env")
 
@@ -133,7 +135,7 @@ func NewGuardrailProxy(
 			"Set OPENCLAW_GATEWAY_TOKEN in ~/.defenseclaw/.env to require auth on all connections.\n")
 	}
 
-	governor := NewModelGovernor(modelGov)
+	governor := NewModelGovernor(modelGov, opa)
 
 	p := &GuardrailProxy{
 		cfg:          cfg,

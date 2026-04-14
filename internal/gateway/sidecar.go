@@ -611,6 +611,7 @@ func (s *Sidecar) runGuardrail(ctx context.Context) error {
 		s.cfg.PolicyDir,
 		s.notify,
 		s.cfg.ModelGovernance,
+		s.opa,
 	)
 	if err == nil && s.webhooks != nil {
 		proxy.SetWebhookDispatcher(s.webhooks)

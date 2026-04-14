@@ -149,27 +149,13 @@ watch:
 #     enabled: true
 webhooks: []
 
-# Model & provider governance — strict: deny openrouter and bedrock,
-# allow only approved enterprise models.
+# Model & provider governance — strict mode. Allow/deny lists are in the OPA
+# Rego data layer (data.json). See policies/rego/data.json for the strict
+# example: deny openrouter/bedrock, allow only enterprise models.
 model_governance:
   enabled: true
   mode: enforce
-  providers:
-    allow: []
-    deny:
-      - openrouter
-      - bedrock
-  models:
-    allow:
-      - gpt-4o
-      - gpt-4o-*
-      - claude-3.5-*
-      - claude-3-*
-      - gemini-*
-    deny:
-      - gpt-3.5-*
   block_message: "This model or provider is not authorized by your organization's security policy."
-  log_allowed: false
 
 enforcement:
   max_enforcement_delay_seconds: 1

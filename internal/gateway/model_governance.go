@@ -17,11 +17,13 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
-	"path"
 	"strings"
+	"time"
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/policy"
 )
 
 // GovernanceVerdict is the result of a model/provider governance check.
@@ -31,38 +33,31 @@ type GovernanceVerdict struct {
 	Rule    string // "provider-allow", "provider-deny", "model-allow", "model-deny"
 }
 
-// ModelGovernor evaluates model and provider names against allow/deny
-// lists. A nil governor always allows (feature disabled).
+// ModelGovernor evaluates model and provider names against OPA policy.
+// A nil governor always allows (feature disabled).
 type ModelGovernor struct {
 	mode         string
 	blockMessage string
 	logAllowed   bool
-
-	providerAllow []string
-	providerDeny  []string
-	modelAllow    []string
-	modelDeny     []string
+	opa          *policy.Engine
 }
 
 // NewModelGovernor creates a governor from config. Returns nil when
 // governance is disabled, so callers can nil-check for fast path.
-func NewModelGovernor(cfg config.ModelGovernanceConfig) *ModelGovernor {
+func NewModelGovernor(cfg config.ModelGovernanceConfig, opa *policy.Engine) *ModelGovernor {
 	if !cfg.Enabled {
 		return nil
 	}
 	return &ModelGovernor{
-		mode:          strings.ToLower(cfg.Mode),
-		blockMessage:  cfg.BlockMessage,
-		logAllowed:    cfg.LogAllowed,
-		providerAllow: toLowerSlice(cfg.Providers.Allow),
-		providerDeny:  toLowerSlice(cfg.Providers.Deny),
-		modelAllow:    toLowerSlice(cfg.Models.Allow),
-		modelDeny:     toLowerSlice(cfg.Models.Deny),
+		mode:         strings.ToLower(cfg.Mode),
+		blockMessage: cfg.BlockMessage,
+		logAllowed:   cfg.LogAllowed,
+		opa:          opa,
 	}
 }
 
-// Check evaluates the provider and model against the configured rules.
-// Provider is checked first, then model. Returns a verdict with reason.
+// Check evaluates the provider and model against OPA policy.
+// Returns a verdict with allow/deny and reason.
 func (g *ModelGovernor) Check(provider, model string) *GovernanceVerdict {
 	if g == nil {
 		return &GovernanceVerdict{Allowed: true}
@@ -71,41 +66,29 @@ func (g *ModelGovernor) Check(provider, model string) *GovernanceVerdict {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	model = strings.ToLower(strings.TrimSpace(model))
 
-	if provider != "" {
-		if len(g.providerAllow) > 0 {
-			if !matchAny(provider, g.providerAllow) {
-				return &GovernanceVerdict{
-					Allowed: false,
-					Rule:    "provider-allow",
-					Reason:  fmt.Sprintf("provider %q is not in the allowed list", provider),
-				}
-			}
-		}
-		if matchAny(provider, g.providerDeny) {
-			return &GovernanceVerdict{
-				Allowed: false,
-				Rule:    "provider-deny",
-				Reason:  fmt.Sprintf("provider %q is explicitly denied", provider),
-			}
+	if g.opa == nil {
+		return &GovernanceVerdict{Allowed: true}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := g.opa.EvaluateModelGovernance(ctx, policy.ModelGovernanceInput{
+		Provider: provider,
+		Model:    model,
+	})
+	if err != nil {
+		return &GovernanceVerdict{
+			Allowed: true,
+			Reason:  fmt.Sprintf("policy eval error (fail-open): %v", err),
 		}
 	}
 
-	if model != "" {
-		if len(g.modelAllow) > 0 {
-			if !matchAny(model, g.modelAllow) {
-				return &GovernanceVerdict{
-					Allowed: false,
-					Rule:    "model-allow",
-					Reason:  fmt.Sprintf("model %q is not in the allowed list", model),
-				}
-			}
-		}
-		if matchAny(model, g.modelDeny) {
-			return &GovernanceVerdict{
-				Allowed: false,
-				Rule:    "model-deny",
-				Reason:  fmt.Sprintf("model %q is explicitly denied", model),
-			}
+	if out.Action == "deny" {
+		return &GovernanceVerdict{
+			Allowed: false,
+			Reason:  out.Reason,
+			Rule:    out.Rule,
 		}
 	}
 
@@ -131,25 +114,4 @@ func (g *ModelGovernor) BlockMessage() string {
 // LogAllowed returns whether allowed requests should be logged.
 func (g *ModelGovernor) LogAllowed() bool {
 	return g != nil && g.logAllowed
-}
-
-// matchAny returns true if value matches any pattern using glob (path.Match).
-func matchAny(value string, patterns []string) bool {
-	for _, p := range patterns {
-		if matched, _ := path.Match(p, value); matched {
-			return true
-		}
-		if p == value {
-			return true
-		}
-	}
-	return false
-}
-
-func toLowerSlice(s []string) []string {
-	out := make([]string, len(s))
-	for i, v := range s {
-		out[i] = strings.ToLower(strings.TrimSpace(v))
-	}
-	return out
 }

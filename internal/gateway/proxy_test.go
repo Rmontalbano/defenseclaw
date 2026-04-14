@@ -2341,12 +2341,17 @@ func TestBlockedResponseHeaderGemini(t *testing.T) {
 // Model governance integration tests
 // ---------------------------------------------------------------------------
 
-func newGovTestProxy(t *testing.T, gov config.ModelGovernanceConfig, mode string) *GuardrailProxy {
+func newGovTestProxy(t *testing.T, gov config.ModelGovernanceConfig, govData map[string]interface{}, mode string) *GuardrailProxy {
 	t.Helper()
 	prov := &mockProvider{}
 	insp := newMockInspector()
 	p := newTestProxy(t, prov, insp, mode)
-	p.governor = NewModelGovernor(gov)
+	if govData != nil {
+		opa := newTestOPA(t, govData)
+		p.governor = NewModelGovernor(gov, opa)
+	} else {
+		p.governor = NewModelGovernor(gov, nil)
+	}
 	return p
 }
 
@@ -2354,8 +2359,10 @@ func TestGovernanceDeniedModelReturnsBlock(t *testing.T) {
 	proxy := newGovTestProxy(t, config.ModelGovernanceConfig{
 		Enabled:      true,
 		Mode:         "enforce",
-		Models:       config.ListRule{Deny: []string{"gpt-3.5-*"}},
 		BlockMessage: "Blocked by governance",
+	}, map[string]interface{}{
+		"providers": map[string]interface{}{"allow": []string{}, "deny": []string{}},
+		"models":    map[string]interface{}{"allow": []string{}, "deny": []string{"gpt-3.5-*"}},
 	}, "observe")
 
 	body := mustJSON(t, map[string]interface{}{
@@ -2382,8 +2389,10 @@ func TestGovernanceDeniedProviderReturnsBlock(t *testing.T) {
 	proxy := newGovTestProxy(t, config.ModelGovernanceConfig{
 		Enabled:      true,
 		Mode:         "enforce",
-		Providers:    config.ListRule{Deny: []string{"bedrock"}},
 		BlockMessage: "Provider not allowed",
+	}, map[string]interface{}{
+		"providers": map[string]interface{}{"allow": []string{}, "deny": []string{"bedrock"}},
+		"models":    map[string]interface{}{"allow": []string{}, "deny": []string{}},
 	}, "observe")
 
 	body := mustJSON(t, map[string]interface{}{
@@ -2414,7 +2423,9 @@ func TestGovernanceAllowedModelProceedsToInspection(t *testing.T) {
 	proxy := newGovTestProxy(t, config.ModelGovernanceConfig{
 		Enabled: true,
 		Mode:    "enforce",
-		Models:  config.ListRule{Allow: []string{"gpt-4o", "gpt-4o-*"}},
+	}, map[string]interface{}{
+		"providers": map[string]interface{}{"allow": []string{}, "deny": []string{}},
+		"models":    map[string]interface{}{"allow": []string{"gpt-4o", "gpt-4o-*"}, "deny": []string{}},
 	}, "observe")
 
 	body := mustJSON(t, map[string]interface{}{
@@ -2438,8 +2449,10 @@ func TestGovernanceMonitorModeDoesNotBlock(t *testing.T) {
 	proxy := newGovTestProxy(t, config.ModelGovernanceConfig{
 		Enabled:      true,
 		Mode:         "monitor",
-		Models:       config.ListRule{Deny: []string{"gpt-3.5-*"}},
 		BlockMessage: "Monitored block",
+	}, map[string]interface{}{
+		"providers": map[string]interface{}{"allow": []string{}, "deny": []string{}},
+		"models":    map[string]interface{}{"allow": []string{}, "deny": []string{"gpt-3.5-*"}},
 	}, "observe")
 
 	body := mustJSON(t, map[string]interface{}{
@@ -2462,8 +2475,7 @@ func TestGovernanceMonitorModeDoesNotBlock(t *testing.T) {
 func TestGovernanceDisabledAllowsEverything(t *testing.T) {
 	proxy := newGovTestProxy(t, config.ModelGovernanceConfig{
 		Enabled: false,
-		Models:  config.ListRule{Deny: []string{"*"}},
-	}, "observe")
+	}, nil, "observe")
 
 	body := mustJSON(t, map[string]interface{}{
 		"model": "gpt-3.5-turbo",
@@ -2483,8 +2495,10 @@ func TestGovernanceDeniedModelStreaming(t *testing.T) {
 	proxy := newGovTestProxy(t, config.ModelGovernanceConfig{
 		Enabled:      true,
 		Mode:         "enforce",
-		Models:       config.ListRule{Deny: []string{"gpt-3.5-*"}},
 		BlockMessage: "Streaming governance block",
+	}, map[string]interface{}{
+		"providers": map[string]interface{}{"allow": []string{}, "deny": []string{}},
+		"models":    map[string]interface{}{"allow": []string{}, "deny": []string{"gpt-3.5-*"}},
 	}, "observe")
 
 	body := mustJSON(t, map[string]interface{}{

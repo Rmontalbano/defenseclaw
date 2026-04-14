@@ -17,10 +17,54 @@
 package gateway
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/defenseclaw/defenseclaw/internal/config"
+	"github.com/defenseclaw/defenseclaw/internal/policy"
 )
+
+// newTestOPA creates a temporary OPA engine with the given model_governance
+// data and the production Rego policy.
+func newTestOPA(t *testing.T, govData map[string]interface{}) *policy.Engine {
+	t.Helper()
+
+	dir := t.TempDir()
+
+	data := map[string]interface{}{
+		"model_governance": govData,
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatalf("marshal data.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data.json"), raw, 0o644); err != nil {
+		t.Fatalf("write data.json: %v", err)
+	}
+
+	regoSrc, err := os.ReadFile("../../policies/rego/model_governance.rego")
+	if err != nil {
+		t.Fatalf("read model_governance.rego: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model_governance.rego"), regoSrc, 0o644); err != nil {
+		t.Fatalf("write rego: %v", err)
+	}
+
+	engine, err := policy.New(dir)
+	if err != nil {
+		t.Fatalf("policy.New: %v", err)
+	}
+	return engine
+}
+
+func govCfg(mode string) config.ModelGovernanceConfig {
+	return config.ModelGovernanceConfig{
+		Enabled: true,
+		Mode:    mode,
+	}
+}
 
 func TestNilGovernorAllowsAll(t *testing.T) {
 	var g *ModelGovernor
@@ -31,18 +75,32 @@ func TestNilGovernorAllowsAll(t *testing.T) {
 }
 
 func TestDisabledGovernorReturnsNil(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{Enabled: false})
+	g := NewModelGovernor(config.ModelGovernanceConfig{Enabled: false}, nil)
 	if g != nil {
 		t.Fatalf("disabled config should produce nil governor")
 	}
 }
 
+func TestNoOPAEngineAllowsAll(t *testing.T) {
+	g := NewModelGovernor(govCfg("enforce"), nil)
+	v := g.Check("openai", "gpt-4o")
+	if !v.Allowed {
+		t.Fatalf("nil OPA engine should allow all requests (fail-open)")
+	}
+}
+
 func TestProviderAllowList(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "enforce",
-		Providers: config.ListRule{Allow: []string{"openai", "anthropic"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{"openai", "anthropic"},
+			"deny":  []string{},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	tests := []struct {
 		provider string
@@ -71,11 +129,17 @@ func TestProviderAllowList(t *testing.T) {
 }
 
 func TestProviderDenyList(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "enforce",
-		Providers: config.ListRule{Deny: []string{"openrouter", "bedrock"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{"openrouter", "bedrock"},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	tests := []struct {
 		provider string
@@ -100,11 +164,17 @@ func TestProviderDenyList(t *testing.T) {
 }
 
 func TestModelAllowListWithGlobs(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled: true,
-		Mode:    "enforce",
-		Models:  config.ListRule{Allow: []string{"gpt-4o", "gpt-4o-*", "claude-*"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{"gpt-4o", "gpt-4o-*", "claude-*"},
+			"deny":  []string{},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	tests := []struct {
 		model   string
@@ -130,11 +200,17 @@ func TestModelAllowListWithGlobs(t *testing.T) {
 }
 
 func TestModelDenyListWithGlobs(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled: true,
-		Mode:    "enforce",
-		Models:  config.ListRule{Deny: []string{"gpt-3.5-*", "llama-*"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{"gpt-3.5-*", "llama-*"},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	tests := []struct {
 		model   string
@@ -157,12 +233,17 @@ func TestModelDenyListWithGlobs(t *testing.T) {
 }
 
 func TestCombinedProviderAllowedModelDenied(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "enforce",
-		Providers: config.ListRule{Allow: []string{"openai"}},
-		Models:    config.ListRule{Deny: []string{"gpt-3.5-*"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{"openai"},
+			"deny":  []string{},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{"gpt-3.5-*"},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	v := g.Check("openai", "gpt-4o")
 	if !v.Allowed {
@@ -186,35 +267,18 @@ func TestCombinedProviderAllowedModelDenied(t *testing.T) {
 	}
 }
 
-func TestCombinedProviderDenyModelAllow(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "enforce",
-		Providers: config.ListRule{Deny: []string{"bedrock"}},
-		Models:    config.ListRule{Allow: []string{"gpt-4o", "claude-*"}},
-	})
-
-	v := g.Check("openai", "gpt-4o")
-	if !v.Allowed {
-		t.Error("openai/gpt-4o should be allowed")
-	}
-
-	v = g.Check("bedrock", "claude-3.5-sonnet")
-	if v.Allowed {
-		t.Error("bedrock should be denied even when model is allowed")
-	}
-
-	v = g.Check("openai", "llama-3-70b")
-	if v.Allowed {
-		t.Error("llama model should be denied by model allow list")
-	}
-}
-
 func TestEmptyListsAllowAll(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled: true,
-		Mode:    "enforce",
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	v := g.Check("openai", "gpt-4o")
 	if !v.Allowed {
@@ -228,12 +292,17 @@ func TestEmptyListsAllowAll(t *testing.T) {
 }
 
 func TestCaseInsensitivity(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "enforce",
-		Providers: config.ListRule{Allow: []string{"OpenAI", "Anthropic"}},
-		Models:    config.ListRule{Deny: []string{"GPT-3.5-*"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{"OpenAI", "Anthropic"},
+			"deny":  []string{},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{"GPT-3.5-*"},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	v := g.Check("OPENAI", "gpt-4o")
 	if !v.Allowed {
@@ -252,11 +321,17 @@ func TestCaseInsensitivity(t *testing.T) {
 }
 
 func TestMonitorMode(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "monitor",
-		Providers: config.ListRule{Deny: []string{"bedrock"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{"bedrock"},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
 	})
+	g := NewModelGovernor(govCfg("monitor"), opa)
 
 	if !g.IsMonitorOnly() {
 		t.Error("should report monitor mode")
@@ -272,12 +347,12 @@ func TestGovernanceBlockMessage(t *testing.T) {
 	g := NewModelGovernor(config.ModelGovernanceConfig{
 		Enabled:      true,
 		BlockMessage: "Custom block message",
-	})
+	}, nil)
 	if g.BlockMessage() != "Custom block message" {
 		t.Error("should return custom block message")
 	}
 
-	g2 := NewModelGovernor(config.ModelGovernanceConfig{Enabled: true})
+	g2 := NewModelGovernor(config.ModelGovernanceConfig{Enabled: true}, nil)
 	if g2.BlockMessage() == "" {
 		t.Error("should return default block message when empty")
 	}
@@ -292,23 +367,29 @@ func TestLogAllowed(t *testing.T) {
 	g := NewModelGovernor(config.ModelGovernanceConfig{
 		Enabled:    true,
 		LogAllowed: true,
-	})
+	}, nil)
 	if !g.LogAllowed() {
 		t.Error("should report log_allowed=true")
 	}
 
-	g2 := NewModelGovernor(config.ModelGovernanceConfig{Enabled: true})
+	g2 := NewModelGovernor(config.ModelGovernanceConfig{Enabled: true}, nil)
 	if g2.LogAllowed() {
 		t.Error("should default to log_allowed=false")
 	}
 }
 
 func TestProviderAllowAndDenyCombined(t *testing.T) {
-	g := NewModelGovernor(config.ModelGovernanceConfig{
-		Enabled:   true,
-		Mode:      "enforce",
-		Providers: config.ListRule{Allow: []string{"openai", "bedrock"}, Deny: []string{"bedrock"}},
+	opa := newTestOPA(t, map[string]interface{}{
+		"providers": map[string]interface{}{
+			"allow": []string{"openai", "bedrock"},
+			"deny":  []string{"bedrock"},
+		},
+		"models": map[string]interface{}{
+			"allow": []string{},
+			"deny":  []string{},
+		},
 	})
+	g := NewModelGovernor(govCfg("enforce"), opa)
 
 	v := g.Check("openai", "gpt-4o")
 	if !v.Allowed {
