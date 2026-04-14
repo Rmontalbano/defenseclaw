@@ -223,3 +223,48 @@ webhooks:
 | **Set by** | Operator, manually in `config.yaml`. |
 | **Read by** | **Go sidecar** at startup via `config.Load()`. **Python CLI** via `config.load()` (read-only, for display). |
 | **Effect** | When enabled, the `WebhookDispatcher` in `internal/gateway/webhook.go` sends structured JSON payloads to each endpoint when enforcement events (block, drift, guardrail-block) occur. Retries up to 3 times with exponential backoff on transient failures (5xx, network errors). |
+
+## Model Governance Config
+
+The `model_governance` section controls which LLM models and providers are permitted through the guardrail proxy. When enabled, requests for disallowed models or providers are blocked before content inspection, preventing shadow AI and enforcing data residency.
+
+```yaml
+model_governance:
+  enabled: true
+  mode: enforce              # enforce | monitor (log-only)
+
+  providers:
+    allow: []                # empty = all known providers allowed
+    deny: []                 # e.g. ["openrouter", "bedrock"]
+
+  models:
+    allow: []                # e.g. ["gpt-4o", "claude-*"] — supports glob
+    deny: []                 # e.g. ["gpt-3.5-*"]
+
+  block_message: "This model or provider is not authorized by your organization's policy."
+  log_allowed: false         # if true, log allowed requests too (verbose)
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Enable model/provider governance. |
+| `mode` | string | `"enforce"` | `enforce` blocks denied requests; `monitor` logs but does not block. |
+| `providers.allow` | []string | `[]` | If non-empty, only these providers are permitted. Matches canonical names from `providers.json` (e.g. `openai`, `anthropic`, `azure`, `bedrock`). |
+| `providers.deny` | []string | `[]` | Providers to block. Checked after the allow list. |
+| `models.allow` | []string | `[]` | If non-empty, only these models are permitted. Supports glob patterns (e.g. `gpt-4o-*`, `claude-*`). |
+| `models.deny` | []string | `[]` | Models to block. Supports glob patterns. |
+| `block_message` | string | `"This model or provider is not authorized by your organization's policy."` | User-facing message returned in the blocked response. |
+| `log_allowed` | bool | `false` | Log allowed requests for auditing. |
+
+**Semantics:**
+- Allow lists are evaluated first; if non-empty, only listed items pass.
+- Deny lists are checked next; any match blocks.
+- Provider names match the canonical names from `providers.json`: `openai`, `anthropic`, `azure`, `gemini`, `bedrock`, `openrouter`, `ollama`.
+- All matching is case-insensitive.
+- Denied requests emit a `model-governance-deny` audit event with severity HIGH, which is also dispatched to configured webhooks.
+
+| | |
+|---|---|
+| **Set by** | Operator, manually in `config.yaml`. |
+| **Read by** | **Go sidecar** at startup via `config.Load()`. The `ModelGovernor` is created in `NewGuardrailProxy` and checks are applied before guardrail content inspection. |
+| **Effect** | In `enforce` mode, denied requests receive a blocked response (OpenAI-compatible format) and are logged as audit events. In `monitor` mode, denials are logged but requests proceed normally. |

@@ -180,5 +180,9 @@ func DefaultConfig() *Config {
 		SkillActions:  DefaultSkillActions(),
 		MCPActions:    DefaultMCPActions(),
 		PluginActions: DefaultPluginActions(),
+		ModelGovernance: ModelGovernanceConfig{
+			Mode:         "enforce",
+			BlockMessage: "This model or provider is not authorized by your organization's policy.",
+		},
 	}
 }

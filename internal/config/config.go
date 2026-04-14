@@ -59,8 +59,9 @@ type Config struct {
 	SkillActions   SkillActionsConfig   `mapstructure:"skill_actions"    yaml:"skill_actions"`
 	MCPActions     MCPActionsConfig     `mapstructure:"mcp_actions"      yaml:"mcp_actions"`
 	PluginActions  PluginActionsConfig  `mapstructure:"plugin_actions"   yaml:"plugin_actions"`
-	OTel           OTelConfig           `mapstructure:"otel"             yaml:"otel"`
-	Webhooks       []WebhookConfig      `mapstructure:"webhooks"         yaml:"webhooks"`
+	OTel            OTelConfig            `mapstructure:"otel"              yaml:"otel"`
+	Webhooks        []WebhookConfig      `mapstructure:"webhooks"          yaml:"webhooks"`
+	ModelGovernance ModelGovernanceConfig `mapstructure:"model_governance"  yaml:"model_governance"`
 }
 
 type OTelConfig struct {
@@ -156,6 +157,24 @@ type WebhookConfig struct {
 	TimeoutSeconds  int      `mapstructure:"timeout_seconds"  yaml:"timeout_seconds"`
 	CooldownSeconds *int     `mapstructure:"cooldown_seconds" yaml:"cooldown_seconds,omitempty"`
 	Enabled         bool     `mapstructure:"enabled"          yaml:"enabled"`
+}
+
+// ListRule defines allow/deny string lists for governance matching.
+type ListRule struct {
+	Allow []string `mapstructure:"allow" yaml:"allow"`
+	Deny  []string `mapstructure:"deny"  yaml:"deny"`
+}
+
+// ModelGovernanceConfig controls which LLM models and providers are
+// permitted through the guardrail proxy. When enabled, requests for
+// disallowed models or providers are blocked before content inspection.
+type ModelGovernanceConfig struct {
+	Enabled      bool     `mapstructure:"enabled"       yaml:"enabled"`
+	Mode         string   `mapstructure:"mode"           yaml:"mode"`
+	Providers    ListRule `mapstructure:"providers"      yaml:"providers"`
+	Models       ListRule `mapstructure:"models"         yaml:"models"`
+	BlockMessage string   `mapstructure:"block_message"  yaml:"block_message"`
+	LogAllowed   bool     `mapstructure:"log_allowed"    yaml:"log_allowed"`
 }
 
 // ResolvedSecret returns the webhook secret/token from the env var.
@@ -786,4 +805,9 @@ func setDefaults(dataDir string) {
 	_ = viper.BindEnv("otel.logs.endpoint", "DEFENSECLAW_OTEL_LOGS_ENDPOINT")
 	_ = viper.BindEnv("otel.logs.protocol", "DEFENSECLAW_OTEL_LOGS_PROTOCOL")
 	_ = viper.BindEnv("otel.logs.url_path", "DEFENSECLAW_OTEL_LOGS_URL_PATH")
+
+	viper.SetDefault("model_governance.enabled", false)
+	viper.SetDefault("model_governance.mode", "enforce")
+	viper.SetDefault("model_governance.block_message", "This model or provider is not authorized by your organization's policy.")
+	viper.SetDefault("model_governance.log_allowed", false)
 }
