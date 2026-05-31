@@ -416,6 +416,10 @@ final class SetupWorkspaceModel {
                     continue
                 }
                 guard !field.flag.isEmpty else {
+                    // Positional argument (no flag): append the value alone.
+                    if !value.isEmpty {
+                        args.append(value)
+                    }
                     continue
                 }
                 if field.alwaysPass || field.required || (!value.isEmpty && value != field.defaultValue) {

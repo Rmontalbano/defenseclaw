@@ -446,7 +446,17 @@ enum SetupCatalog {
             systemImage: "bell.and.waves.left.and.right",
             fields: [],
             workflows: webhookWorkflows + [
-                SetupWorkflow(id: "webhook-list", title: "List Webhooks", subtitle: "Show configured notifier webhooks as JSON.", command: ["setup", "webhook", "list", "--json"])
+                SetupWorkflow(id: "webhook-list", title: "List Webhooks", subtitle: "Show configured notifier webhooks as JSON.", command: ["setup", "webhook", "list", "--json"]),
+                SetupWorkflow(
+                    id: "webhook-test",
+                    title: "Send Test Webhook",
+                    subtitle: "Dispatch a synthetic event through a configured webhook to verify delivery.",
+                    command: ["setup", "webhook", "test"],
+                    fields: [
+                        SetupWorkflowField("Webhook Name", flag: "", kind: .text, required: true, help: "Name of a configured webhook (see List Webhooks)."),
+                        SetupWorkflowField("Dry Run", flag: "--dry-run", kind: .toggle, help: "Format the payload but do not deliver.")
+                    ]
+                )
             ],
             isAdvanced: true
         )
