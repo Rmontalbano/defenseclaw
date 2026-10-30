@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/defenseclaw/defenseclaw/internal/shellparse"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -385,10 +386,10 @@ func unprovenProtectedWriteDepth(command, cwd, home string, depth int) string {
 // Recoverable syntax errors may leave executable calls and redirects in the
 // syntax tree. Check those effects before discarding the failed parse.
 func unprovenShellParseWrite(command, cwd, home string) bool {
-	if len(command) > MaxPayloadBytes {
+	if len(command) > MaxPayloadBytes || shellparse.TooDeep(command) {
 		return true // Beyond the command proof bound, effects are unknown.
 	}
-	file, _ := syntax.NewParser(syntax.Variant(syntax.LangBash), syntax.RecoverErrors(8)).Parse(strings.NewReader(command), "")
+	file, _ := syntax.NewParser(syntax.Variant(syntax.LangBash), syntax.RecoverErrors(8)).Parse(shellparse.Reader(command), "")
 	if file == nil {
 		return strings.Contains(command, ">") ||
 			unprovenWriter.MatchString(command) && protectedReachFromText(command, cwd, home)
@@ -624,6 +625,25 @@ func awkDynamicOptionName(word *syntax.Word) string {
 // shell expansion. A shell word's outer quotes are syntax, not AWK source.
 // Exposed file output is unproved because the expansion can change its target.
 func awkDynamicProgram(word *syntax.Word, cwd, home string) (string, bool) {
+	text, ok := awkRenderedProgram(word)
+	if !ok {
+		return "", false
+	}
+	if !strings.Contains(text, "{") || !strings.Contains(text, "}") {
+		return "", false
+	}
+	output, unsafe, _ := awkOutputProof(text, cwd, home)
+	if output || unsafe || awkCommandEffect(text) {
+		return "", false
+	}
+	return text, true
+}
+
+// awkRenderedProgram is the awk source of a double-quoted program word with
+// each shell expansion replaced by X. A literal print target in it is still
+// a target whatever the expansion holds (GAP-2197: awk "BEGIN {print $1 >>
+// \"alias\"}").
+func awkRenderedProgram(word *syntax.Word) (string, bool) {
 	if word == nil || len(word.Parts) != 1 {
 		return "", false
 	}
@@ -653,15 +673,7 @@ func awkDynamicProgram(word *syntax.Word, cwd, home string) (string, bool) {
 			return "", false
 		}
 	}
-	text := rendered.String()
-	if !strings.Contains(text, "{") || !strings.Contains(text, "}") {
-		return "", false
-	}
-	output, unsafe, _ := awkOutputProof(text, cwd, home)
-	if output || unsafe || awkCommandEffect(text) {
-		return "", false
-	}
-	return text, true
+	return rendered.String(), true
 }
 
 // awkCommandEffect reports awk code that runs a command (a pipe, system(),
@@ -1681,7 +1693,7 @@ func protectedReachFromText(command, cwd, home string) bool {
 			}
 			candidate := match[1]
 			if candidate == "~" || strings.HasPrefix(candidate, "~/") {
-				candidate = filepath.Join(home, strings.TrimPrefix(candidate, "~/"))
+				candidate = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(candidate, "~"), "/"))
 			}
 			if protectedReachTextPath(OperandPath(candidate, cwd), protected, ssh) {
 				return true
@@ -1704,7 +1716,8 @@ func protectedReachFromText(command, cwd, home string) bool {
 			continue
 		}
 		if token == "~" || strings.HasPrefix(token, "~/") {
-			token = filepath.Join(home, strings.TrimPrefix(token, "~/"))
+			// A bare ~ is the home itself (GAP-1093).
+			token = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(token, "~"), "/"))
 		}
 		if protectedReachTextPath(OperandPath(token, cwd), protected, ssh) {
 			return true

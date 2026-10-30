@@ -34,6 +34,11 @@ import (
 	"github.com/defenseclaw/defenseclaw/internal/processutil"
 )
 
+// judgeCompatSkillScanner is the entry point the DefenseClaw CLI wheel
+// installs beside skill-scanner. It runs skill-scanner with the fix that
+// accepts a well-formed judge answer from any supported model (GAP-2609).
+const judgeCompatSkillScanner = "defenseclaw-skill-scanner"
+
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // liteLLMModel returns the model string shaped for LiteLLM /
@@ -45,9 +50,26 @@ var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 func liteLLMModel(llm config.LLMConfig) string {
 	model := llm.Model
 	if model != "" && llm.Provider != "" && !strings.Contains(model, "/") {
-		return llm.Provider + "/" + model
+		model = llm.Provider + "/" + model
 	}
-	return model
+	return withBedrockInferenceProfile(llm, model)
+}
+
+// withBedrockInferenceProfile puts llm.bedrock.inference_profile (for
+// example "us.") in front of a Bedrock model id, as the gateway provider
+// does before dispatch: models such as Claude Haiku 4.5 are served only
+// through a cross-region inference profile, so the scanner judge sent
+// the bare id and failed where the gateway judge worked (GAP-2396).
+func withBedrockInferenceProfile(llm config.LLMConfig, model string) string {
+	if llm.Bedrock == nil {
+		return model
+	}
+	profile := strings.TrimSpace(llm.Bedrock.InferenceProfile)
+	prefix, id, ok := strings.Cut(model, "/")
+	if profile == "" || !ok || !strings.EqualFold(prefix, "bedrock") || strings.Contains(id, "/") || strings.HasPrefix(id, "arn:") || strings.HasPrefix(id, profile) {
+		return model
+	}
+	return prefix + "/" + profile + id
 }
 
 // extractJSON finds the first top-level JSON object in data.

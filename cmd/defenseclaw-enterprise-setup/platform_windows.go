@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -226,6 +227,13 @@ func executeEnterpriseSetup(
 			}
 			removeStaleEnterpriseSetupStages(programData, time.Now(), progress, stderr)
 			if err := requireEnterpriseSetupFreeSpace(programData, payload, opts.Action); err != nil {
+				return 0, err
+			}
+		}
+		// Refuse an upgrade on saturated processors before staging: it
+		// could not finish within TIMEOUTSECONDS (GAP-2265).
+		if deployment, err := standaloneSetupDeployment(); err == nil {
+			if err := requireEnterpriseSetupHostCapacity(opts.Action, deployment, payload.Manifest.Version); err != nil {
 				return 0, err
 			}
 		}
@@ -736,8 +744,8 @@ func removeEnterpriseSetupStageEntry(path string) error {
 	delay := 25 * time.Millisecond
 	for {
 		err := removeEnterpriseSetupStageFile(path)
-		if err == nil || !(errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)) ||
-			!time.Now().Add(delay).Before(deadline) {
+		retryable := errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, windows.ERROR_ACCESS_DENIED)
+		if err == nil || !retryable || !time.Now().Add(delay).Before(deadline) {
 			return err
 		}
 		time.Sleep(delay)
@@ -893,8 +901,29 @@ func enterpriseLifecycleArguments(stageRoot string, opts enterpriseSetupOptions)
 				arguments = append(arguments, "--refuse-capability-loss")
 			}
 		}
+		if opts.Action == "ensure" {
+			// What is left of TIMEOUTSECONDS after the payload checks and
+			// unpacking (GAP-2509).
+			remaining := time.Until(enterpriseSetupLifecycleDeadline(opts, time.Now()))
+			if seconds := enterpriseEnsureChildTimeoutSeconds(remaining); seconds > 0 {
+				arguments = append(arguments, "--timeout-seconds", strconv.Itoa(seconds))
+			}
+		}
 	}
 	return arguments
+}
+
+// enterpriseSetupProcessStarted is this process's creation time, so the time
+// Windows took to load and start the Setup image counts toward
+// TIMEOUTSECONDS too (GAP-2509).
+func enterpriseSetupProcessStarted() time.Time {
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(windows.CurrentProcess(), &creation, &exit, &kernel, &user); err == nil {
+		if started := enterpriseSetupStartFromCreation(time.Now(), time.Unix(0, creation.Nanoseconds())); !started.IsZero() {
+			return started
+		}
+	}
+	return enterpriseSetupInitTime
 }
 
 func trustedEnterpriseSetupEnvironment(stageRoot string) ([]string, error) {

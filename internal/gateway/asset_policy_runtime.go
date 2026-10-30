@@ -95,6 +95,7 @@ func (a *APIServer) claudeCodeMCPAssetDecision(ctx context.Context, req claudeCo
 	if decision, refused := a.mcpStateUnreadableDecision(ctx, "claudecode", req.HookEventName, probe); refused {
 		return decision, true
 	}
+	a.noteHookReportedMCPServer(ctx, "claudecode", req.HookEventName, probe)
 	if decision, refused := a.mcpAdmissionPendingDecision(ctx, "claudecode", req.HookEventName, probe); refused {
 		return decision, true
 	}
@@ -248,6 +249,7 @@ func (a *APIServer) codexMCPAssetDecision(ctx context.Context, req codexHookRequ
 	}
 	probe := mcpProbeFromFields(a.codexMCPServerName(ctx, req), req.ToolName, req.ToolInput)
 	probe.WorkspaceDir = req.CWD
+	a.noteHookReportedMCPServer(ctx, "codex", req.HookEventName, probe)
 	if decision, refused := a.mcpAdmissionPendingDecision(ctx, "codex", req.HookEventName, probe); refused {
 		return decision, true
 	}
@@ -602,7 +604,12 @@ func unprovenMCPDefinitionDecision(ctx context.Context, cfg *config.Config, conn
 	policy, _ := cfg.EffectiveAssetTypePolicy(connector, "mcp")
 	mode := config.AssetPolicyModeAction
 	if !rulesPinEndpointForServer(cfg.AssetPolicy.MCP.Denied, connector, probe.ServerName) {
-		gated := cfg.AssetPolicy.Enabled && (policy.RegistryRequired || strings.EqualFold(strings.TrimSpace(policy.Default), "deny"))
+		// Explicit endpoint denies survive the off switch; registry, allow
+		// and default checks follow runtime detection even when the agent's
+		// command-line definition could not be read.
+		detection, _ := cfg.AssetRuntimeDetectionFor("mcp")
+		gated := cfg.AssetPolicy.Enabled && detection.Enabled &&
+			(policy.RegistryRequired || strings.EqualFold(strings.TrimSpace(policy.Default), "deny"))
 		if !gated || (!rulesPinEndpointForServer(cfg.AssetPolicy.MCP.Allowed, connector, probe.ServerName) &&
 			!rulesPinEndpointForServer(policy.Registry, connector, probe.ServerName)) {
 			return config.AssetPolicyDecision{}, false

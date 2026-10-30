@@ -53,7 +53,9 @@ The `quiet` preset is the one with the fewest false positives, and it is measure
 
 ### Before you start
 
-These `defenseclaw skill` steps are for a per-user installation. On managed Linux and macOS, the standard user's `defenseclaw` launcher offers only `sandbox` commands. Install a skill in a folder covered by the gateway's install watcher and ask an administrator to review it. An administrator can run `defenseclaw-gateway scan skill /path/to/skill` from a privileged prompt and set any allow rule in the admin config. On managed Windows, use the administrator's `defenseclaw.exe scan skill` command for a folder outside user profiles.
+These `defenseclaw skill` steps are for a per-user installation. On managed Linux and macOS, the standard user's `defenseclaw` launcher offers only `sandbox` commands, so an administrator scans the skill with the managed gateway: `sudo /opt/defenseclaw/bin/defenseclaw-gateway scan skill /path/to/skill` on Linux or `sudo /opt/cisco/defenseclaw/bin/defenseclaw-gateway scan skill /path/to/skill` on macOS, for a folder outside home folders (and, on Linux, temporary folders; see [Known limits](/docs/support-matrix#managed-linux-and-macos-scans)), and sets any allow rule in the admin config. On managed Windows, use the administrator's `defenseclaw.exe scan skill` command for a folder outside user profiles. An administrator scan outside the watcher reports the verdict and the findings only: it never blocks or quarantines the skill. On managed Windows and macOS it prints the preset (`policy: quiet`) but no policy result line. The scan output shows the highest severity, for example `verdict: INFO (1 findings)`; the scan's audit row shows `verdict=warn` for any skill with findings, a CRITICAL one included.
+
+`defenseclaw-gateway scan code` needs to read the whole folder. A directory it cannot list or a file it cannot read, including a macOS privacy-protected folder, makes the scan incomplete: it prints `code scan incomplete: part of <folder> could not be read, so nothing was reported as clean`, exits 1 and reports nothing.
 
 - A judge makes the scan accurate: `defenseclaw setup llm` and `defenseclaw keys set DEFENSECLAW_LLM_KEY`. Without one the scan runs the static rules only and `defenseclaw doctor` warns.
 - Python 3.11 or newer. See [Versions, platforms and availability](#versions-platforms-and-availability).
@@ -69,18 +71,19 @@ These `defenseclaw skill` steps are for a per-user installation. On managed Linu
    ```text
      Source: ~/code/risky-skill
        [WARN] risky-skill (5 findings) — max severity: CRITICAL
-           policy: rejected - the policy refuses this skill at install; the copy already on disk stays loaded until you act.
-             Block it: defenseclaw skill block risky-skill --connector openclaw
+           policy: rejected - the policy would refuse this skill at install.
+             Block it: defenseclaw skill block risky-skill
+             Accept it: defenseclaw skill allow risky-skill
      Skill:    risky-skill
      Scanner:  policy quiet, judge off
-     Verdict:  CRITICAL (2 critical, 1 high, 1 low, 1 info)
+     Verdict:  CRITICAL (2 critical, 1 high, 1 medium, 1 info)
        [CRITICAL] PROMPT INJECTION detected by YARA
-         Location: SKILL.md:5
+         Location: SKILL.md:6
          Generic prompt injection patterns: Ignore all previous instructions
      …
    ```
 
-   `judge off` shows because this run used `--no-use-llm`. With a judge, the line reads `judge on`. `defenseclaw skill scan --all` scans every skill of every configured connector.
+   `judge off` shows because no judge is configured, so the scan ran the static rules only. With a judge, the line reads `judge on`; `--no-use-llm` turns the judge off for one run. A folder that no connector loads reads `would refuse this skill at install`. For an installed skill the line adds that the copy already on disk stays loaded until you act, and `Block it` names the skill's `--connector`. `defenseclaw skill scan --all` scans every skill of every configured connector.
 
 2. Read the verdict.
 
@@ -265,7 +268,7 @@ When the provider is `vllm`, the wizard prints the serve line for you:
 Until a judge works, the scanner still runs its static rules with the same `quiet` policy, so a skill is not left unscanned. Treat that as a gap to close, not a setup: `quiet` is measured with the judge, and the rules alone miss most malicious skills. `defenseclaw doctor` and the wizard say so:
 
 ```text
-  [WARN] Scanner settings  —  the LLM judge is off; Add an LLM judge ('defenseclaw setup llm') or the local vLLM option
+  [WARN] Scanner settings  —  the skill-scanner LLM judge is off; Add an LLM judge ('defenseclaw setup llm') or the local vLLM option
 ```
 
 ## Optional analyzers
@@ -459,7 +462,7 @@ DefenseClaw pins the scanner versions below. `defenseclaw doctor` compares the i
 
 `cisco-ai-skill-scanner` 2.2.1 ships platform wheels only, each bundling a native helper, so there is no pure-Python wheel. DefenseClaw pins the wheel for macOS 13 or newer (Apple silicon and Intel), Linux with glibc (x86_64 and aarch64) and Windows x64. There is no wheel for Windows on ARM or for musl-based Linux, and DefenseClaw does not ship for either.
 
-DefenseClaw itself still runs on Python 3.10, but skill scanning does not: on a 3.10 runtime the scanner is not installed, and `defenseclaw doctor` reports `skill and MCP scanning need Python 3.11+; this runtime is Python 3.10`. The installers ship Python 3.12 or 3.13.
+DefenseClaw needs Python 3.11 to 3.13 (the package refuses Python 3.10), so every supported runtime includes the scanner. The installers ship Python 3.12 or 3.13.
 
 The scanner is a hard runtime dependency, and supported release-managed runtimes include it. If it is absent from a packaged runtime, treat the installation as damaged; do not patch its managed virtual environment with `pip`. Use the [supported install or repair path](/docs/get-started/download). Source contributors should synchronize the checkout's locked environment with `uv sync`. If the SDK is missing when you run a scan, DefenseClaw prints a concise dependency error and exits cleanly; it does not crash the gateway.
 

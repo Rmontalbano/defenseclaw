@@ -43,6 +43,9 @@ func runEnterpriseHookVerifyAttemptStandaloneUnix(ctx context.Context, registrat
 	if err != nil {
 		return run, err
 	}
+	// until 1.1: the guardian skips the OpenHands/OmniGent rows an older
+	// enumerator wrote, so verify does too (GAP-2504).
+	manifest.Targets = withoutRemovedConnectorTargets(manifest.Targets)
 	records := loadEnterpriseHookGuardianRecords(cfg.DataDir)
 	authorization, exists, authorizationErr := records.Authorization, records.AuthorizationExists, records.AuthorizationErr
 	activation, activationExists, activationErr := records.Activation, records.ActivationExists, records.ActivationErr
@@ -213,6 +216,12 @@ func runEnterpriseHookVerifyAttemptStandaloneUnix(ctx context.Context, registrat
 		}
 		run.Rows[index] = row
 	}
+	// The guardian's records prove registration. Public Verify then refuses
+	// to attest a managed Hermes home (GAP-0766), so its records are
+	// compared with the registration result: a fully hooked Hermes set fails
+	// only with the session-only refusal, not also as "extra or stale"
+	// targets and mismatched dispositions (GAP-1703).
+	registered := append([]enterpriseHookReconcileRow(nil), run.Rows...)
 	for index, row := range run.Rows {
 		if row.Connector != "hermes" || !row.OK {
 			continue
@@ -238,6 +247,15 @@ func runEnterpriseHookVerifyAttemptStandaloneUnix(ctx context.Context, registrat
 	}
 	if run.AuthorizationErr == nil && exists && activationExists {
 		proof := run
+		proof.Rows, proof.Pending, proof.Failures = registered, 0, 0
+		for _, row := range registered {
+			switch {
+			case row.Pending:
+				proof.Pending++
+			case !row.OK:
+				proof.Failures++
+			}
+		}
 		if partialRegistration {
 			proof = enterpriseHookPartialRegistrationProof(run)
 		}

@@ -812,7 +812,11 @@ func extractJSONValue(
 ) extractedInput {
 	switch value := value.(type) {
 	case string:
-		if issue := validateCommandText(value); issue != "" {
+		validate := validateCommandText
+		if patchSchema {
+			validate = validatePatchToolCommandText
+		}
+		if issue := validate(value); issue != "" {
 			return extractedInput{
 				status: statusForInputIssue(issue),
 				issues: []IssueCode{issue},
@@ -875,7 +879,7 @@ func extractJSONObject(
 			continue
 		}
 		value := object[key]
-		if patchSchema && isPatchInputField(key) {
+		if patchSchema && (isPatchInputField(key) || isPatchEnvelopeField(key, value)) {
 			text, ok := value.(string)
 			if !ok {
 				out.mergeProblem(StatusInvalid, IssueInvalidJSON)
@@ -896,7 +900,11 @@ func extractJSONObject(
 		case "command":
 			switch value := value.(type) {
 			case string:
-				if issue := validateCommandText(value); issue != "" {
+				validate := validateCommandText
+				if patchSchema {
+					validate = validatePatchToolCommandText
+				}
+				if issue := validate(value); issue != "" {
 					out.mergeProblem(statusForInputIssue(issue), issue)
 					continue
 				}

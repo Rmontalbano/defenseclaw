@@ -22,8 +22,8 @@ import (
 )
 
 // scan skill|mcp|plugin run the gateway's scanners through its API: on a
-// managed Windows computer, where the per-user Python CLI is not installed,
-// they are how an administrator scans with the scanners, policy and judge
+// managed computer, where the per-user Python CLI is not installed, they are
+// how an administrator scans with the scanners, policy and judge
 // the admin config sets (GAP-0132).
 var (
 	scanGatewayJSON bool
@@ -84,6 +84,7 @@ type gatewayScanResponse struct {
 	Verdict  string         `json:"verdict"`
 	BySev    map[string]int `json:"findings_count_by_severity"`
 	Settings map[string]any `json:"scanner_settings"`
+	Warnings []string       `json:"warnings"`
 	Result   struct {
 		Target   string `json:"target"`
 		Duration int64  `json:"duration"`
@@ -105,6 +106,9 @@ func runGatewayScan(cmd *cobra.Command, kind, target string) error {
 			return fmt.Errorf("resolve %s: %w", target, err)
 		}
 		target = absolute
+	}
+	if err := managedScanUnavailable(kind, target); err != nil {
+		return err
 	}
 	base, token, err := scanGatewayEndpoint()
 	if err != nil {
@@ -166,6 +170,9 @@ func runGatewayScan(cmd *cobra.Command, kind, target string) error {
 			value = "(none)"
 		}
 		fmt.Fprintf(out, "  %-12s %s\n", strings.ReplaceAll(key, "_", " ")+":", value)
+	}
+	for _, warning := range parsed.Warnings {
+		fmt.Fprintf(out, "  %-12s %s\n", "warning:", warning)
 	}
 	verdict := parsed.Verdict
 	if len(parsed.Result.Findings) == 0 {
